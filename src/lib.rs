@@ -1,6 +1,7 @@
 /* Copyright Ian Daniher, 2013, 2014.
    Distributed under the terms of the GPLv3. */
 
+extern crate rustradio;
 extern crate num;
 extern crate native;
 extern crate libc;
@@ -56,7 +57,7 @@ pub fn get_device_count() -> u32 {
 pub fn open_device() -> *mut c_void {
     unsafe {
         let mut i: u32 = 0;
-        let dev_struct_ptr: *mut c_void = ptr::mut_null();
+        let dev_struct_ptr: *mut c_void = ptr::null_mut();
         'tryDevices: loop {
             let success = rtlsdr_open(&dev_struct_ptr, i);
             if success == 0 {

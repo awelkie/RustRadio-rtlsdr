@@ -2,4 +2,7 @@
 
 name = "RustRadio_rtlsdr"
 version = "0.0.1"
-authors = ["Allen Welkie <>"]
+authors = ["Allen Welkie <allen.welkie is my gmail>"]
+
+[dependencies.rustradio]
+git = "https://github.com/awelkie/RustRadio.git"
