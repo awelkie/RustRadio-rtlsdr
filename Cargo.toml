@@ -1,0 +1,5 @@
+[package]
+
+name = "RustRadio_rtlsdr"
+version = "0.0.1"
+authors = ["Allen Welkie <>"]
