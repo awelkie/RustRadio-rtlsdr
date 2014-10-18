@@ -111,14 +111,14 @@ pub fn set_gain_auto(device: *mut c_void) {
     }
 }
 
-extern fn rtlsdr_callback(buf: *const u8, len: u32, mut producer: Producer<Complex<f32>>) {
-    unsafe {
-        //FIXME this gets the mutex lock for each sample. We can do better by grabbing the mutex lock once then pushing all the available samples
+extern fn rtlsdr_callback(buf: *const u8, len: u32, producer: Producer<Complex<f32>>) {
+    let mut access = producer.inner.buff_mutex.lock();
+    unsafe{
         for i in iter::range_step(0, len, 2) {
             let real = *(buf.offset(i as int));
             let imag = *(buf.offset((i + 1) as int));
             let sample = Complex{re: i2f(real), im: i2f(imag)};
-            producer.push(sample);
+            access.push(sample);
         }
     }
 }
@@ -161,7 +161,7 @@ pub struct RTLSDRSource {
 }
 
 impl RTLSDRSource {
-    fn new(frequency: u32, sample_rate: u32) -> RTLSDRSource {
+    pub fn new(frequency: u32, sample_rate: u32) -> RTLSDRSource {
         let device = open_device();
         set_frequency(device, frequency);
         set_sample_rate(device, sample_rate);
@@ -186,12 +186,6 @@ impl<T: Send> Consumer<T> {
 
 pub struct Producer<T> {
     inner: Arc<Buff<T>>,
-}
-
-impl<T: Send> Producer<T> {
-    pub fn push(&mut self, element: T) {
-        (*self.inner.buff_mutex.lock()).push(element)
-    }
 }
 
 pub fn shared_buffer<T: Send>(initial_capacity: uint) -> (Consumer<T>, Producer<T>) {
