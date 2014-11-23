@@ -3,11 +3,10 @@
 
 extern crate rustradio;
 extern crate num;
-extern crate native;
 extern crate libc;
 use num::complex::Complex;
 
-use native::task::spawn;
+use std::task::spawn;
 use libc::{c_int, c_uint, c_void};
 use std::ptr;
 use std::vec;
@@ -66,7 +65,7 @@ pub fn open_device() -> *mut c_void {
                 break 'tryDevices
             }
             if i > get_device_count() {
-                fail!("no available devices");
+                panic!("no available devices");
             }
             i += 1;
         }
@@ -118,7 +117,7 @@ extern fn rtlsdr_callback(buf: *const u8, len: u32, producer: Producer<Complex<f
             let real = *(buf.offset(i as int));
             let imag = *(buf.offset((i + 1) as int));
             let sample = Complex{re: i2f(real), im: i2f(imag)};
-            access.push(sample);
+            access.push_back(sample);
         }
     }
 }
@@ -180,7 +179,7 @@ pub struct Consumer<T> {
 
 impl<T: Send> Consumer<T> {
     pub fn pop(&mut self) -> Option<T> {
-        (*self.inner.buff_mutex.lock()).pop()
+        (*self.inner.buff_mutex.lock()).pop_back()
     }
 }
 
