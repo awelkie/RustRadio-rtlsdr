@@ -6,3 +6,4 @@ authors = ["Allen Welkie <allen.welkie is my gmail>"]
 
 [dependencies.rustradio]
 git = "https://github.com/awelkie/RustRadio.git"
+branch = "callback_buffer"

@@ -4,16 +4,16 @@
 extern crate rustradio;
 extern crate num;
 extern crate libc;
-use num::complex::Complex;
 
+use num::complex::Complex;
 use std::task::spawn;
-use libc::{c_int, c_uint, c_void};
+use libc::{c_int, c_void};
 use std::ptr;
-use std::vec;
 use std::string;
-use std::collections::RingBuf;
-use std::sync::{Mutex, Arc};
+use std::sync::Arc;
 use std::iter;
+
+use rustradio::buffers::{Producer, Consumer, push_buffer};
 
 #[link(name= "rtlsdr")]
 
@@ -26,7 +26,7 @@ extern "C" {
     fn rtlsdr_set_tuner_gain(dev: *mut c_void, gain: u32) -> c_int;
     fn rtlsdr_set_tuner_gain_mode(dev: *mut c_void, mode: u32) -> c_int;
     fn rtlsdr_read_sync(dev: *mut c_void, buf: *mut u8, len: u32, n_read: *mut c_int) -> c_int;
-    fn rtlsdr_read_async(dev: *mut c_void, cb: extern "C" fn(*const u8, u32, Producer<Complex<f32>>), producer: Producer<Complex<f32>>, buf_num: u32, buf_len: u32) -> c_int;
+    fn rtlsdr_read_async(dev: *mut c_void, cb: extern "C" fn(*const u8, u32, Arc<Producer<Complex<f32>>>), producer: Arc<Producer<Complex<f32>>>, buf_num: u32, buf_len: u32) -> c_int;
     fn rtlsdr_cancel_async(dev: *mut c_void) -> c_int;
     fn rtlsdr_set_sample_rate(dev: *mut c_void, sps: u32) -> c_int;
     fn rtlsdr_get_sample_rate(dev: *mut c_void) -> u32;
@@ -76,7 +76,7 @@ pub fn open_device() -> *mut c_void {
 pub fn get_device_name(dev_index: u32) -> string::String {
     unsafe {
         let device_string: *const u8 = rtlsdr_get_device_name(dev_index);
-        return string::raw::from_buf(device_string);
+        return String::from_raw_buf(device_string);
     }
 }
 
@@ -110,43 +110,33 @@ pub fn set_gain_auto(device: *mut c_void) {
     }
 }
 
-extern fn rtlsdr_callback(buf: *const u8, len: u32, producer: Producer<Complex<f32>>) {
-    let mut access = producer.inner.buff_mutex.lock();
-    unsafe{
+extern fn rtlsdr_callback(buf: *const u8, len: u32, producer: Arc<Producer<Complex<f32>>>) {
+    let mut complex_vec: Vec<Complex<f32>> = Vec::with_capacity(len as uint / 2);
+    unsafe {
         for i in iter::range_step(0, len, 2) {
             let real = *(buf.offset(i as int));
             let imag = *(buf.offset((i + 1) as int));
             let sample = Complex{re: i2f(real), im: i2f(imag)};
-            access.push_back(sample);
+            complex_vec.push(sample);
         }
+    }
+    if let Err(_) = producer.push_slice(complex_vec.as_slice()) {
+        panic!("Underflow!");
     }
 }
 
-pub fn read_async(dev: *mut c_void, block_size: u32) -> Consumer<Complex<f32>> {
-    let (consumer, producer) = shared_buffer(block_size as uint);
+pub fn read_async(dev: *mut c_void, block_size: u32, producer: Arc<Producer<Complex<f32>>>) {
     spawn(proc() {
         unsafe{
             rtlsdr_read_async(dev, rtlsdr_callback, producer, 0, 0);
         }
     });
-    return consumer;
 }
 
 pub fn stop_async(dev: *mut c_void) -> () {
     unsafe {
         let success = rtlsdr_cancel_async(dev);
         assert_eq!(success, 0);
-    }
-}
-
-pub fn read_sync(dev: *mut c_void, ct: c_uint) -> Vec<u8> {
-    unsafe {
-        let mut n_read: c_int = 0;
-        let mut buffer = vec::Vec::with_capacity(512);
-        let success = rtlsdr_read_sync(dev, buffer.as_mut_ptr(), ct, &mut n_read);
-        assert_eq!(success, 0);
-        assert_eq!(ct as i32, n_read);
-        return buffer;
     }
 }
 
@@ -157,6 +147,9 @@ pub fn data_to_samples(data: Vec<u8>) -> Vec<Complex<f32>> {
 
 pub struct RTLSDRSource {
     device: *mut c_void,
+    producer: Arc<Producer<Complex<f32>>>,
+    consumer: Consumer<Complex<f32>>,
+    first_time: bool,
 }
 
 impl RTLSDRSource {
@@ -164,34 +157,20 @@ impl RTLSDRSource {
         let device = open_device();
         set_frequency(device, frequency);
         set_sample_rate(device, sample_rate);
-        RTLSDRSource { device: device }
+        let (producer, consumer) = push_buffer(512);
+        let producer_ptr = Arc::new(producer);
+        RTLSDRSource { device: device,
+                       producer: producer_ptr,
+                       consumer: consumer,
+                       first_time: true}
     }
 }
 
-/* The Concurrent Buffer */
-pub struct Buff<T> {
-    buff_mutex: Mutex<RingBuf<T>>,
-}
-
-pub struct Consumer<T> {
-    inner: Arc<Buff<T>>,
-}
-
-impl<T: Send> Consumer<T> {
-    pub fn pop(&mut self) -> Option<T> {
-        (*self.inner.buff_mutex.lock()).pop_back()
+impl Iterator<Complex<f32>> for RTLSDRSource {
+    fn next(&mut self) -> Option<Complex<f32>> {
+        if self.first_time {
+            read_async(self.device, 512, self.producer.clone());
+        }
+        self.consumer.next()
     }
-}
-
-pub struct Producer<T> {
-    inner: Arc<Buff<T>>,
-}
-
-pub fn shared_buffer<T: Send>(initial_capacity: uint) -> (Consumer<T>, Producer<T>) {
-    let buff: Buff<T> = Buff { buff_mutex: Mutex::new(RingBuf::with_capacity(initial_capacity)) };
-    let arc = Arc::new(buff);
-    let producer = Producer { inner: arc.clone() };
-    let consumer = Consumer { inner: arc };
-
-    (consumer, producer)
 }
